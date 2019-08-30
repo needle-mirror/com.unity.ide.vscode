@@ -27,9 +27,10 @@ namespace VSCodeEditor
     public interface IAssemblyNameProvider
     {
         string GetAssemblyNameFromScriptPath(string path);
-        IEnumerable<Assembly> GetAllAssemblies(Func<string, bool> shouldFileBePartOfSolution);
+        IEnumerable<Assembly> GetAssemblies(Func<string, bool> shouldFileBePartOfSolution);
         IEnumerable<string> GetAllAssetPaths();
         UnityEditor.PackageManager.PackageInfo FindForAssetPath(string assetPath);
+
     }
 
     public struct TestSettings {
@@ -44,8 +45,9 @@ namespace VSCodeEditor
             return CompilationPipeline.GetAssemblyNameFromScriptPath(path);
         }
 
-        public IEnumerable<Assembly> GetAllAssemblies(Func<string, bool> shouldFileBePartOfSolution)
+        public IEnumerable<Assembly> GetAssemblies(Func<string, bool> shouldFileBePartOfSolution)
         {
+            // CompilationPipeline.GetAssemblies(AssembliesType.Player).Where(i => 0 < i.sourceFiles.Length && i.sourceFiles.Any(shouldFileBePartOfSolution));
             return CompilationPipeline.GetAssemblies().Where(i => 0 < i.sourceFiles.Length && i.sourceFiles.Any(shouldFileBePartOfSolution));
         }
 
@@ -311,14 +313,12 @@ namespace VSCodeEditor
         {
             // Only synchronize islands that have associated source files and ones that we actually want in the project.
             // This also filters out DLLs coming from .asmdef files in packages.
-            var assemblies = m_AssemblyNameProvider.GetAllAssemblies(ShouldFileBePartOfSolution);
+            var assemblies = m_AssemblyNameProvider.GetAssemblies(ShouldFileBePartOfSolution);
 
             var allAssetProjectParts = GenerateAllAssetProjectParts();
 
-            var monoIslands = assemblies.ToList();
-
-            SyncSolution(monoIslands);
-            var allProjectIslands = RelevantIslandsForMode(monoIslands).ToList();
+            SyncSolution(assemblies);
+            var allProjectIslands = RelevantIslandsForMode(assemblies).ToList();
             foreach (Assembly assembly in allProjectIslands)
             {
                 var responseFileData = ParseResponseFileData(assembly);
@@ -443,20 +443,20 @@ namespace VSCodeEditor
 
         void SyncFileIfNotChanged(string filename, string newContents)
         {
-            if (File.Exists(filename) &&
-                newContents == File.ReadAllText(filename))
-            {
-                return;
-            }
             if (Settings.ShouldSync)
             {
+                if (File.Exists(filename) &&
+                    newContents == File.ReadAllText(filename))
+                {
+                    return;
+                }
                 File.WriteAllText(filename, newContents, Encoding.UTF8);
             }
             else
             {
                 var utf8 = Encoding.UTF8;
                 byte[] utfBytes = utf8.GetBytes(newContents);
-                Settings.SyncPath[filename] = utf8.GetString(utfBytes, 0, utfBytes.Length);  
+                Settings.SyncPath[filename] = utf8.GetString(utfBytes, 0, utfBytes.Length);
             }
         }
 
@@ -496,12 +496,6 @@ namespace VSCodeEditor
 
             foreach (string reference in islandRefs)
             {
-                if (reference.EndsWith("/UnityEditor.dll", StringComparison.Ordinal)
-                    || reference.EndsWith("/UnityEngine.dll", StringComparison.Ordinal)
-                    || reference.EndsWith("\\UnityEditor.dll", StringComparison.Ordinal)
-                    || reference.EndsWith("\\UnityEngine.dll", StringComparison.Ordinal))
-                    continue;
-
                 var match = k_ScriptReferenceExpression.Match(reference);
                 if (match.Success)
                 {
@@ -560,7 +554,13 @@ namespace VSCodeEditor
 
         public string ProjectFile(Assembly assembly)
         {
-            return Path.Combine(ProjectDirectory, $"{Utility.FileNameWithoutExtension(assembly.outputPath)}.csproj");
+            var fileBuilder = new StringBuilder(Utility.FileNameWithoutExtension(assembly.outputPath));
+//            if (!assembly.flags.HasFlag(AssemblyFlags.EditorAssembly) && m_PlayerAssemblies.Contains(assembly))
+//            {
+//                fileBuilder.Append("-player");
+//            }
+            fileBuilder.Append(".csproj");
+            return Path.Combine(ProjectDirectory, fileBuilder.ToString());
         }
 
         public string SolutionFile()
@@ -576,8 +576,6 @@ namespace VSCodeEditor
             var arguments = new object[]
             {
                 k_ToolsVersion, k_ProductVersion, ProjectGuid(island.outputPath),
-                InternalEditorUtility.GetEngineAssemblyPath(),
-                InternalEditorUtility.GetEditorAssemblyPath(),
                 string.Join(";", new[] { "DEBUG", "TRACE" }.Concat(EditorUserBuildSettings.activeScriptCompilationDefines).Concat(island.defines).Concat(responseFilesData.SelectMany(x => x.Defines)).Distinct().ToArray()),
                 MSBuildNamespaceUri,
                 Utility.FileNameWithoutExtension(island.outputPath),
@@ -613,34 +611,34 @@ namespace VSCodeEditor
             var header = new[]
             {
                 @"<?xml version=""1.0"" encoding=""utf-8""?>",
-                @"<Project ToolsVersion=""{0}"" DefaultTargets=""Build"" xmlns=""{6}"">",
+                @"<Project ToolsVersion=""{0}"" DefaultTargets=""Build"" xmlns=""{4}"">",
                 @"  <PropertyGroup>",
-                @"    <LangVersion>{10}</LangVersion>",
+                @"    <LangVersion>{8}</LangVersion>",
                 @"  </PropertyGroup>",
                 @"  <PropertyGroup>",
                 @"    <Configuration Condition="" '$(Configuration)' == '' "">Debug</Configuration>",
                 @"    <Platform Condition="" '$(Platform)' == '' "">AnyCPU</Platform>",
                 @"    <ProductVersion>{1}</ProductVersion>",
                 @"    <SchemaVersion>2.0</SchemaVersion>",
-                @"    <RootNamespace>{8}</RootNamespace>",
+                @"    <RootNamespace>{6}</RootNamespace>",
                 @"    <ProjectGuid>{{{2}}}</ProjectGuid>",
                 @"    <OutputType>Library</OutputType>",
                 @"    <AppDesignerFolder>Properties</AppDesignerFolder>",
-                @"    <AssemblyName>{7}</AssemblyName>",
-                @"    <TargetFrameworkVersion>{9}</TargetFrameworkVersion>",
+                @"    <AssemblyName>{5}</AssemblyName>",
+                @"    <TargetFrameworkVersion>{7}</TargetFrameworkVersion>",
                 @"    <FileAlignment>512</FileAlignment>",
-                @"    <BaseDirectory>{11}</BaseDirectory>",
+                @"    <BaseDirectory>{9}</BaseDirectory>",
                 @"  </PropertyGroup>",
                 @"  <PropertyGroup Condition="" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' "">",
                 @"    <DebugSymbols>true</DebugSymbols>",
                 @"    <DebugType>full</DebugType>",
                 @"    <Optimize>false</Optimize>",
                 @"    <OutputPath>Temp\bin\Debug\</OutputPath>",
-                @"    <DefineConstants>{5}</DefineConstants>",
+                @"    <DefineConstants>{3}</DefineConstants>",
                 @"    <ErrorReport>prompt</ErrorReport>",
                 @"    <WarningLevel>4</WarningLevel>",
                 @"    <NoWarn>0169</NoWarn>",
-                @"    <AllowUnsafeBlocks>{12}</AllowUnsafeBlocks>",
+                @"    <AllowUnsafeBlocks>{10}</AllowUnsafeBlocks>",
                 @"  </PropertyGroup>",
                 @"  <PropertyGroup Condition="" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' "">",
                 @"    <DebugType>pdbonly</DebugType>",
@@ -649,7 +647,7 @@ namespace VSCodeEditor
                 @"    <ErrorReport>prompt</ErrorReport>",
                 @"    <WarningLevel>4</WarningLevel>",
                 @"    <NoWarn>0169</NoWarn>",
-                @"    <AllowUnsafeBlocks>{12}</AllowUnsafeBlocks>",
+                @"    <AllowUnsafeBlocks>{10}</AllowUnsafeBlocks>",
                 @"  </PropertyGroup>"
             };
 
@@ -669,20 +667,7 @@ namespace VSCodeEditor
                 @"  <ItemGroup>"
             };
 
-            var footer = new[]
-            {
-                @"    <Reference Include=""UnityEngine"">",
-                @"      <HintPath>{3}</HintPath>",
-                @"    </Reference>",
-                @"    <Reference Include=""UnityEditor"">",
-                @"      <HintPath>{4}</HintPath>",
-                @"    </Reference>",
-                @"  </ItemGroup>",
-                @"  <ItemGroup>",
-                @""
-            };
-
-            var text = header.Concat(forceExplicitReferences).Concat(itemGroupStart).Concat(footer).ToArray();
+            var text = header.Concat(forceExplicitReferences).Concat(itemGroupStart).ToArray();
             return string.Join("\r\n", text);
         }
 
