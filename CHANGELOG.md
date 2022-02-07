@@ -1,11 +1,14 @@
 # Code Editor Package for Visual Studio Code
 
-## [1.2.4] - 2021-08-18
+## [1.2.5] - 2022-02-07
 
-- Allow for per assembly roslyn analyzers
-- Optimize package info look up performance. Reducing project generation time
-- Use absolute path for Roslyn analyzers
-- Always sync on asset updates
+- Introduce OnGeneratedCSProjectFiles, OnGeneratedCSProject and OnGeneratedSlnSolution callbacks.
+- Always use forward slash in source paths
+- Analyzers use absolute paths
+- Ruleset files for roslyn analyzers
+- Extra snap search paths on Ubuntu
+- Specific c# language version for specific unity versions
+- No longer hide .gitignore in VSCode file explorer
 
 
 ## [1.2.3] - 2020-10-23
